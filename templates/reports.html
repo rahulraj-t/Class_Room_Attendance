@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+{% block title %}Reports{% endblock %}
+{% block body %}
+<main>
+  <h1>Attendance reports</h1>
+  <div class="grid cols-4" style="margin:16px 0">
+    <div class="card stat"><div class="num" id="total">–</div><div class="lbl">Students in database</div></div>
+    <div class="card stat"><div class="num" id="nsess">–</div><div class="lbl">Sessions recorded</div></div>
+  </div>
+
+  <div class="grid cols-2" style="grid-template-columns:minmax(0,1fr) minmax(0,1.3fr)">
+    <div class="card">
+      <h2>Sessions</h2>
+      <div class="scroll"><table><thead><tr><th>Class</th><th>Date</th><th>Present</th></tr></thead>
+        <tbody id="sessions"></tbody></table></div>
+    </div>
+    <div class="card" id="detail"><p class="muted">Select a session to see who was present and absent.</p></div>
+  </div>
+</main>
+{% endblock %}
+{% block scripts %}
+<script>
+let total = 0;
+async function load(){
+  const d = await api('/api/reports');
+  total = d.total_students;
+  document.getElementById('total').textContent = d.total_students;
+  document.getElementById('nsess').textContent = d.sessions.length;
+  document.getElementById('sessions').innerHTML = d.sessions.length ? d.sessions.map(s => `
+    <tr style="cursor:pointer" data-id="${s.id}">
+      <td>${esc(s.title)}${s.ended_at ? '' : ' <span class="badge live">live</span>'}</td>
+      <td>${esc(s.started_at.replace('T',' ').slice(0,16))}</td>
+      <td>${s.present}/${total}</td></tr>`).join('')
+    : '<tr><td colspan="3" class="muted">No sessions yet</td></tr>';
+}
+document.getElementById('sessions').onclick = e => {
+  const tr = e.target.closest('tr[data-id]'); if (tr) show(tr.dataset.id);
+};
+async function show(id){
+  const d = await api('/api/reports/' + id);
+  const rows = (list, ok) => list.length ? list.map(s =>
+    `<tr><td>${esc(s.student_id)}</td><td>${esc(s.name)}</td><td>${esc(s.department)}</td><td>${esc(s.year)}</td></tr>`).join('')
+    : `<tr><td colspan="4" class="muted">None</td></tr>`;
+  const pct = (d.present.length + d.absent.length) ? Math.round(d.present.length / (d.present.length + d.absent.length) * 100) : 0;
+  document.getElementById('detail').innerHTML = `
+    <div class="row" style="justify-content:space-between">
+      <div><h2 style="margin:0">${esc(d.session.title)}</h2>
+        <span class="muted">${esc(d.session.started_at.replace('T',' '))} · ${pct}% attendance</span></div>
+      <div class="row"><a class="btn small" href="/api/reports/${id}/csv">Download CSV</a>
+        <button class="btn danger small" id="del">Delete</button></div>
+    </div>
+    <h2 style="margin-top:18px"><span class="badge ok">Present · ${d.present.length}</span></h2>
+    <div class="scroll" style="max-height:220px"><table><thead><tr><th>ID</th><th>Name</th><th>Dept</th><th>Year</th></tr></thead><tbody>${rows(d.present)}</tbody></table></div>
+    <h2 style="margin-top:18px"><span class="badge bad">Absent · ${d.absent.length}</span></h2>
+    <div class="scroll" style="max-height:220px"><table><thead><tr><th>ID</th><th>Name</th><th>Dept</th><th>Year</th></tr></thead><tbody>${rows(d.absent)}</tbody></table></div>`;
+  document.getElementById('del').onclick = async () => {
+    if (!confirm('Delete this session report?')) return;
+    await api('/api/reports/' + id, {method:'DELETE'});
+    document.getElementById('detail').innerHTML = '<p class="muted">Deleted.</p>'; load();
+  };
+}
+load();
+</script>
+{% endblock %}

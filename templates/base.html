@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{% block title %}Face Attendance{% endblock %}</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+{% if session.get('teacher_id') %}
+<nav>
+  <span class="logo">Face Attendance</span>
+  <a class="link {{ 'active' if active=='dashboard' }}" href="{{ url_for('dashboard') }}">Dashboard</a>
+  <a class="link {{ 'active' if active=='attendance' }}" href="{{ url_for('attendance_page') }}">Take attendance</a>
+  <a class="link {{ 'active' if active=='register' }}" href="{{ url_for('register_page') }}">Register student</a>
+  <a class="link {{ 'active' if active=='reports' }}" href="{{ url_for('reports_page') }}">Reports</a>
+  <span class="spacer"></span>
+  <span class="muted">{{ session['username'] }}</span>
+  <a class="btn secondary small" href="{{ url_for('logout') }}">Log out</a>
+</nav>
+{% endif %}
+{% block body %}{% endblock %}
+<script>
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+async function api(url, opts){
+  const r = await fetch(url, opts);
+  if (r.status === 401) { location.href = '/login'; throw new Error('auth'); }
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(d.error || 'Request failed');
+  return d;
+}
+</script>
+{% block scripts %}{% endblock %}
+</body>
+</html>

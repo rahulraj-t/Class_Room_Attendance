@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block body %}
+<main>
+  <h1>Welcome, {{ session['username'] }}</h1>
+  <p class="muted">Overview of your attendance system.</p>
+
+  <div class="grid cols-4" style="margin-top:16px">
+    <div class="card stat"><div class="num" id="s-students">–</div><div class="lbl">Registered students</div></div>
+    <div class="card stat"><div class="num" id="s-sessions">–</div><div class="lbl">Total sessions</div></div>
+    <div class="card stat"><div class="num" id="s-today">–</div><div class="lbl">Sessions today</div></div>
+  </div>
+
+  <div class="big-actions">
+    <a href="{{ url_for('attendance_page') }}"><div class="t">Take attendance</div><div class="muted">Start a class session with the webcam</div></a>
+    <a href="{{ url_for('reports_page') }}"><div class="t">Attendance reports</div><div class="muted">Present / absent lists and CSV export</div></a>
+    <a href="{{ url_for('register_page') }}"><div class="t">Register new student</div><div class="muted">Add a student's face to the database</div></a>
+  </div>
+
+  <div class="card">
+    <h2>Students by department</h2>
+    <div id="depts" class="muted">Loading…</div>
+  </div>
+</main>
+{% endblock %}
+{% block scripts %}
+<script>
+api('/api/stats').then(d => {
+  document.getElementById('s-students').textContent = d.total_students;
+  document.getElementById('s-sessions').textContent = d.total_sessions;
+  document.getElementById('s-today').textContent = d.sessions_today;
+  const entries = Object.entries(d.by_department).sort((a,b)=>b[1]-a[1]);
+  const max = Math.max(1, ...entries.map(e=>e[1]));
+  document.getElementById('depts').innerHTML = entries.length
+    ? entries.map(([k,v]) => `<div class="dept-row"><span>${esc(k)}</span><div class="bar"><i style="width:${v/max*100}%"></i></div><b>${v}</b></div>`).join('')
+    : 'No students registered yet.';
+}).catch(e => document.getElementById('depts').textContent = e.message);
+</script>
+{% endblock %}

@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block title %}Teacher login{% endblock %}
+{% block body %}
+<div class="login-box">
+  <div class="card">
+    <h1>Teacher login</h1>
+    <p class="muted" style="margin:0 0 8px">Sign in to manage attendance.</p>
+    <form method="post">
+      <label for="u">Username</label>
+      <input id="u" name="username" autocomplete="username" required autofocus>
+      <label for="p">Password</label>
+      <input id="p" name="password" type="password" autocomplete="current-password" required>
+      {% if error %}<div class="msg err">{{ error }}</div>{% endif %}
+      <button class="btn" style="width:100%;margin-top:18px">Sign in</button>
+    </form>
+  </div>
+</div>
+{% endblock %}

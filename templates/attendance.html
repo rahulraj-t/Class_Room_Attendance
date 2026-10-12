@@ -1,0 +1,548 @@
+{% extends "base.html" %}
+{% block title %}Take attendance{% endblock %}
+{% block body %}
+<main>
+  <h1>Take attendance</h1>
+  <p class="muted">Start a session, point the camera at the class, and students are marked present as they are recognised.</p>
+
+  <div class="card" style="margin:16px 0">
+    <div class="row">
+      <div class="grow">
+        <label for="title" style="margin-top:0">Class / subject</label>
+        <input id="title" placeholder="e.g. CS101 – Data Structures">
+      </div>
+      <button class="btn" id="start" type="button">Start session</button>
+      <button class="btn danger" id="stop" type="button" disabled>End session</button>
+    </div>
+
+    <div class="row" style="margin-top:10px;align-items:flex-end">
+      <div class="grow">
+        <label for="cameraSelect" style="margin-top:0">Camera source</label>
+        <select id="cameraSelect" aria-label="Choose camera">
+          <option value="">Detecting cameras…</option>
+        </select>
+      </div>
+      <button class="btn secondary" id="refreshCameras" type="button">Refresh cameras</button>
+      <button class="btn secondary" id="openCamera" type="button">Open camera</button>
+      <button class="btn secondary" id="closeCamera" type="button" disabled>Close camera</button>
+    </div>
+
+    <p class="muted" style="margin:8px 0 0">
+      Keep the DroidCam phone app and Windows client connected.
+      DroidCam will be selected automatically when detected, or select it manually.
+    </p>
+    <div id="msg"></div>
+  </div>
+
+  <div class="grid cols-2" style="grid-template-columns:minmax(0,2fr) minmax(280px,1fr)">
+    <div class="card">
+      <div class="video-wrap">
+        <video id="video" autoplay playsinline muted></video>
+        <canvas id="overlay"></canvas>
+      </div>
+      <div class="row" style="margin-top:10px">
+        <span class="badge live" id="state">Idle</span>
+        <span class="muted">Present: <b id="count">0</b></span>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Marked present</h2>
+      <div class="scroll">
+        <table>
+          <thead>
+            <tr><th>ID</th><th>Name</th><th>Time</th></tr>
+          </thead>
+          <tbody id="present">
+            <tr><td colspan="3" class="muted">Nobody yet</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</main>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const video = document.getElementById('video');
+const overlay = document.getElementById('overlay');
+const octx = overlay.getContext('2d');
+
+const startBtn = document.getElementById('start');
+const stopBtn = document.getElementById('stop');
+const msg = document.getElementById('msg');
+const stateEl = document.getElementById('state');
+
+const cameraSelect = document.getElementById('cameraSelect');
+const refreshCamerasBtn = document.getElementById('refreshCameras');
+const openCameraBtn = document.getElementById('openCamera');
+const closeCameraBtn = document.getElementById('closeCamera');
+
+const grab = document.createElement('canvas');
+
+let stream = null;
+let sessionId = null;
+let running = false;
+let busy = false;
+let cameras = [];
+let userSelectedCamera = false;
+
+const SEND_WIDTH = 640;
+
+function setMsg(message, type) {
+  msg.innerHTML = message
+    ? `<div class="msg ${type}">${esc(message)}</div>`
+    : '';
+}
+
+function stopStream() {
+  if (stream) {
+    stream.getTracks().forEach(track => track.stop());
+  }
+
+  stream = null;
+  video.srcObject = null;
+  octx.clearRect(0, 0, overlay.width, overlay.height);
+  closeCameraBtn.disabled = true;
+}
+
+async function listCameras() {
+  if (!navigator.mediaDevices ||
+      !navigator.mediaDevices.enumerateDevices) {
+    throw new Error(
+      'Camera access is unavailable. Please use Chrome or Edge on the laptop.'
+    );
+  }
+
+  const previous = cameraSelect.value;
+  const devices = await navigator.mediaDevices.enumerateDevices();
+
+  cameras = devices.filter(device => device.kind === 'videoinput');
+  cameraSelect.replaceChildren();
+
+  if (!cameras.length) {
+    cameraSelect.add(new Option('No cameras found', ''));
+    return cameras;
+  }
+
+  cameras.forEach((device, index) => {
+    cameraSelect.add(
+      new Option(
+        device.label || `Camera ${index + 1}`,
+        device.deviceId
+      )
+    );
+  });
+
+  const stillExists = cameras.some(
+    device => device.deviceId === previous
+  );
+
+  const droidCam = cameras.find(
+    device => /droid\s?cam/i.test(device.label)
+  );
+
+  if (userSelectedCamera && stillExists) {
+    cameraSelect.value = previous;
+  } else if (droidCam) {
+    cameraSelect.value = droidCam.deviceId;
+  } else if (stillExists) {
+    cameraSelect.value = previous;
+  } else {
+    cameraSelect.selectedIndex = 0;
+  }
+
+  return cameras;
+}
+
+async function refreshCameraList(requestPermission = true) {
+  refreshCamerasBtn.disabled = true;
+
+  try {
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    const videoDevices = devices.filter(
+      device => device.kind === 'videoinput'
+    );
+
+    // Camera labels may be hidden until permission is granted.
+    if (
+      requestPermission &&
+      videoDevices.length &&
+      !videoDevices.some(device => device.label)
+    ) {
+      const temporary = await navigator.mediaDevices.getUserMedia({
+        video: true,
+        audio: false
+      });
+
+      temporary.getTracks().forEach(track => track.stop());
+
+      await new Promise(resolve => setTimeout(resolve, 200));
+    }
+
+    await listCameras();
+
+    const selected = cameras.find(
+      device => device.deviceId === cameraSelect.value
+    );
+
+    const label =
+      selected?.label ||
+      cameraSelect.options[cameraSelect.selectedIndex]?.text ||
+      'camera';
+
+    setMsg(
+      cameras.length
+        ? `Found ${cameras.length} camera(s). Selected: ${label}.`
+        : 'No camera found. Check that the DroidCam Windows client is connected.',
+      cameras.length ? 'ok' : 'err'
+    );
+  } catch (error) {
+    setMsg('Could not list cameras: ' + error.message, 'err');
+  } finally {
+    refreshCamerasBtn.disabled = running;
+  }
+}
+
+async function openSelectedCamera() {
+  if (stream) return true;
+
+  openCameraBtn.disabled = true;
+
+  try {
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    const videoDevices = devices.filter(
+      device => device.kind === 'videoinput'
+    );
+
+    if (
+      videoDevices.length &&
+      !videoDevices.some(device => device.label)
+    ) {
+      const temporary = await navigator.mediaDevices.getUserMedia({
+        video: true,
+        audio: false
+      });
+
+      temporary.getTracks().forEach(track => track.stop());
+
+      await new Promise(resolve => setTimeout(resolve, 200));
+    }
+
+    await listCameras();
+
+    const selectedId = cameraSelect.value;
+
+    const videoConstraints = {
+      width: { ideal: 1280 },
+      height: { ideal: 720 },
+      frameRate: { ideal: 30, max: 30 }
+    };
+
+    if (selectedId) {
+      videoConstraints.deviceId = { exact: selectedId };
+    }
+
+    stream = await navigator.mediaDevices.getUserMedia({
+      video: videoConstraints,
+      audio: false
+    });
+
+    video.srcObject = stream;
+    await video.play();
+
+    if (!video.videoWidth) {
+      await new Promise(resolve => {
+        video.addEventListener('loadedmetadata', resolve, {
+          once: true
+        });
+      });
+    }
+
+    closeCameraBtn.disabled = false;
+    stateEl.textContent =
+      `Camera ready (${video.videoWidth}×${video.videoHeight})`;
+
+    setMsg(
+      'Camera is ready. Click Start session when you are ready.',
+      'ok'
+    );
+
+    return true;
+  } catch (error) {
+    stopStream();
+
+    setMsg(
+      'Cannot open the selected camera: ' + error.message +
+      '. Check that DroidCam is running and no other application is using it.',
+      'err'
+    );
+
+    stateEl.textContent = 'Camera unavailable';
+    return false;
+  } finally {
+    openCameraBtn.disabled = running;
+  }
+}
+
+async function loop() {
+  if (!running) return;
+
+  if (!busy && video.videoWidth) {
+    busy = true;
+
+    try {
+      // Resize frames before sending them to the laptop's Python backend.
+      const scale = Math.min(1, SEND_WIDTH / video.videoWidth);
+
+      grab.width = Math.max(
+        1,
+        Math.round(video.videoWidth * scale)
+      );
+
+      grab.height = Math.max(
+        1,
+        Math.round(video.videoHeight * scale)
+      );
+
+      grab.getContext('2d').drawImage(
+        video,
+        0,
+        0,
+        grab.width,
+        grab.height
+      );
+
+      const blob = await new Promise(resolve => {
+        grab.toBlob(resolve, 'image/jpeg', 0.8);
+      });
+
+      if (!blob) {
+        throw new Error('Could not capture a camera frame.');
+      }
+
+      const formData = new FormData();
+      formData.append('session_id', sessionId);
+      formData.append('frame', blob, 'frame.jpg');
+
+      // Existing Flask API: recognition remains on the laptop.
+      const data = await api('/api/recognize', {
+        method: 'POST',
+        body: formData
+      });
+
+      draw(data);
+
+      document.getElementById('count').textContent = data.present;
+
+      refreshPresent();
+    } catch (error) {
+      if (running) {
+        setMsg(error.message, 'err');
+      }
+    } finally {
+      busy = false;
+    }
+  }
+
+  // Send the next frame after the current request finishes.
+  if (running) {
+    setTimeout(loop, 250);
+  }
+}
+
+function draw(data) {
+  const vw = video.clientWidth;
+  const vh = video.clientHeight;
+
+  overlay.width = vw;
+  overlay.height = vh;
+
+  octx.clearRect(0, 0, vw, vh);
+
+  const scale = Math.min(
+    vw / data.width,
+    vh / data.height
+  );
+
+  const offsetX = (vw - data.width * scale) / 2;
+  const offsetY = (vh - data.height * scale) / 2;
+
+  octx.lineWidth = 2;
+  octx.font = '600 14px system-ui';
+
+  for (const face of data.faces) {
+    const [x1, y1, x2, y2] = face.box;
+    const color = face.known ? '#22c55e' : '#ef4444';
+
+    octx.strokeStyle = color;
+    octx.fillStyle = color;
+
+    octx.strokeRect(
+      offsetX + x1 * scale,
+      offsetY + y1 * scale,
+      (x2 - x1) * scale,
+      (y2 - y1) * scale
+    );
+
+    const label = face.known
+      ? `${face.name} (${Number(face.similarity).toFixed(2)})`
+      : 'Unknown';
+
+    octx.fillText(
+      label,
+      offsetX + x1 * scale,
+      Math.max(14, offsetY + y1 * scale - 6)
+    );
+  }
+}
+
+let lastPresentFetch = 0;
+
+async function refreshPresent() {
+  if (
+    !sessionId ||
+    Date.now() - lastPresentFetch < 1500
+  ) {
+    return;
+  }
+
+  lastPresentFetch = Date.now();
+
+  try {
+    const rows = await api(
+      `/api/session/${sessionId}/present`
+    );
+
+    document.getElementById('present').innerHTML = rows.length
+      ? rows.map(row =>
+          `<tr>
+            <td>${esc(row.student_id)}</td>
+            <td>${esc(row.name)}</td>
+            <td>${esc(String(row.marked_at || '').slice(11))}</td>
+          </tr>`
+        ).join('')
+      : '<tr><td colspan="3" class="muted">Nobody yet</td></tr>';
+  } catch (error) {
+    if (running) {
+      console.warn('Could not refresh attendance list:', error);
+    }
+  }
+}
+
+cameraSelect.addEventListener('change', () => {
+  userSelectedCamera = true;
+});
+
+refreshCamerasBtn.addEventListener('click', () => {
+  refreshCameraList(true);
+});
+
+openCameraBtn.addEventListener('click', () => {
+  openSelectedCamera();
+});
+
+closeCameraBtn.addEventListener('click', () => {
+  if (running) return;
+
+  stopStream();
+  stateEl.textContent = 'Idle';
+  setMsg('Camera closed.', 'ok');
+});
+
+startBtn.onclick = async () => {
+  setMsg('');
+
+  if (!stream) {
+    const cameraOpened = await openSelectedCamera();
+    if (!cameraOpened) return;
+  }
+
+  try {
+    const session = await api('/api/session/start', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        title: document.getElementById('title').value
+      })
+    });
+
+    sessionId = session.session_id;
+  } catch (error) {
+    setMsg(error.message, 'err');
+    return;
+  }
+
+  running = true;
+
+  startBtn.disabled = true;
+  stopBtn.disabled = false;
+
+  document.getElementById('title').disabled = true;
+
+  cameraSelect.disabled = true;
+  refreshCamerasBtn.disabled = true;
+  openCameraBtn.disabled = true;
+  closeCameraBtn.disabled = true;
+
+  stateEl.textContent = 'Recording';
+
+  document.getElementById('present').innerHTML =
+    '<tr><td colspan="3" class="muted">Nobody yet</td></tr>';
+
+  document.getElementById('count').textContent = '0';
+  lastPresentFetch = 0;
+
+  loop();
+};
+
+stopBtn.onclick = async () => {
+  running = false;
+
+  if (sessionId !== null) {
+    await api(`/api/session/${sessionId}/end`, {
+      method: 'POST'
+    }).catch(() => {});
+  }
+
+  const total = document.getElementById('count').textContent;
+
+  sessionId = null;
+  stopStream();
+
+  setMsg(
+    'Session saved. ' + total + ' students marked present.',
+    'ok'
+  );
+
+  msg.innerHTML += '<p><a href="/reports">View report →</a></p>';
+
+  startBtn.disabled = false;
+  stopBtn.disabled = true;
+
+  document.getElementById('title').disabled = false;
+
+  cameraSelect.disabled = false;
+  refreshCamerasBtn.disabled = false;
+  openCameraBtn.disabled = false;
+
+  stateEl.textContent = 'Idle';
+};
+
+window.addEventListener('beforeunload', () => {
+  if (sessionId) {
+    navigator.sendBeacon(`/api/session/${sessionId}/end`);
+  }
+
+  if (stream) {
+    stream.getTracks().forEach(track => track.stop());
+  }
+});
+
+// List cameras when the page loads.
+refreshCameraList(false);
+</script>
+{% endblock %}

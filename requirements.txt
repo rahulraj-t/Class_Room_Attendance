@@ -1,0 +1,7 @@
+flask>=3.0
+python-dotenv
+insightface
+onnxruntime
+opencv-python
+numpy
+qdrant-client

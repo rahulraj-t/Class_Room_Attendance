@@ -1,0 +1,93 @@
+{% extends "base.html" %}
+{% block title %}Register student{% endblock %}
+{% block body %}
+<main>
+  <h1>Register new student</h1>
+  <p class="muted">Capture a clear, front-facing photo or upload one.</p>
+
+  <div class="grid cols-2" style="margin-top:16px">
+    <div class="card">
+      <form id="form">
+        <label>Student ID</label><input name="student_id" required>
+        <label>Name</label><input name="name" required>
+        <label>Department</label><input name="department" required>
+        <label>Year</label><input name="year" required>
+        <label>Photo</label>
+        <div class="row">
+          <button type="button" class="btn secondary small" id="camBtn">Use camera</button>
+          <input type="file" id="file" accept="image/*" style="flex:1">
+        </div>
+        <div id="camBox" style="display:none;margin-top:10px">
+          <video id="video" autoplay playsinline muted class="preview"></video>
+          <button type="button" class="btn small" id="snap">Capture photo</button>
+        </div>
+        <img id="preview" class="preview" style="display:none" alt="">
+        <div id="msg"></div>
+        <button class="btn" style="margin-top:16px" id="submit">Register student</button>
+      </form>
+    </div>
+
+    <div class="card">
+      <div class="row" style="justify-content:space-between"><h2 style="margin:0">Registered students</h2><span class="muted" id="total"></span></div>
+      <div class="scroll" style="margin-top:10px"><table>
+        <thead><tr><th>ID</th><th>Name</th><th>Dept</th><th>Year</th><th></th></tr></thead>
+        <tbody id="list"></tbody></table></div>
+    </div>
+  </div>
+</main>
+{% endblock %}
+{% block scripts %}
+<script>
+const form = document.getElementById('form'), msg = document.getElementById('msg');
+const video = document.getElementById('video'), preview = document.getElementById('preview');
+const fileIn = document.getElementById('file');
+let photoBlob = null, stream = null;
+
+function setMsg(t, cls){ msg.innerHTML = t ? `<div class="msg ${cls}">${esc(t)}</div>` : ''; }
+function showPreview(blob){ photoBlob = blob; preview.src = URL.createObjectURL(blob); preview.style.display = 'block'; }
+function stopCam(){ stream && stream.getTracks().forEach(t=>t.stop()); stream = null; document.getElementById('camBox').style.display='none'; }
+
+fileIn.onchange = () => { if (fileIn.files[0]) { stopCam(); showPreview(fileIn.files[0]); } };
+
+document.getElementById('camBtn').onclick = async () => {
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({video:{width:{ideal:1280},height:{ideal:720}}, audio:false});
+    video.srcObject = stream; document.getElementById('camBox').style.display = 'block';
+  } catch(e) { setMsg('Cannot access camera: ' + e.message, 'err'); }
+};
+document.getElementById('snap').onclick = () => {
+  const c = document.createElement('canvas'); c.width = video.videoWidth; c.height = video.videoHeight;
+  c.getContext('2d').drawImage(video, 0, 0);
+  c.toBlob(b => { showPreview(b); stopCam(); }, 'image/jpeg', 0.92);
+};
+
+form.onsubmit = async e => {
+  e.preventDefault(); setMsg('');
+  if (!photoBlob) return setMsg('Please capture or upload a photo.', 'err');
+  const btn = document.getElementById('submit'); btn.disabled = true; btn.textContent = 'Registering…';
+  const fd = new FormData(form); fd.delete('image');
+  fd.append('image', photoBlob, 'photo.jpg');
+  try {
+    const d = await api('/api/register', {method:'POST', body: fd});
+    setMsg('Student registered successfully.' + (d.warning ? ' ' + d.warning : ''), 'ok');
+    form.reset(); photoBlob = null; preview.style.display = 'none'; loadList();
+  } catch(err) { setMsg(err.message, 'err'); }
+  btn.disabled = false; btn.textContent = 'Register student';
+};
+
+async function loadList(){
+  const rows = await api('/api/students');
+  document.getElementById('total').textContent = rows.length + ' total';
+  document.getElementById('list').innerHTML = rows.length ? rows.map(s =>
+    `<tr><td>${esc(s.student_id)}</td><td>${esc(s.name)}</td><td>${esc(s.department)}</td><td>${esc(s.year)}</td>
+     <td><button class="btn danger small" data-id="${esc(s.student_id)}">Delete</button></td></tr>`).join('')
+    : '<tr><td colspan="5" class="muted">No students yet</td></tr>';
+}
+document.getElementById('list').onclick = async e => {
+  const id = e.target.dataset && e.target.dataset.id;
+  if (!id || !confirm(`Delete student ${id}? Their face data will be removed.`)) return;
+  await api('/api/students/' + encodeURIComponent(id), {method:'DELETE'}); loadList();
+};
+loadList();
+</script>
+{% endblock %}
